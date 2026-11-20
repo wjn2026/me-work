@@ -1,5 +1,7 @@
 nav:
   - index.md
+  - ai
   - os
+  - db
   - soft
   - reference.md

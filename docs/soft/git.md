@@ -2,6 +2,14 @@
 title: git
 ---
 
+## 创建新分支
+
+基于master分支创建并切换
+
+```
+git switch -c 新分支名 master
+```
+
 ## 多账户 SSH 推送
 
 同一台机器上用多个 GitHub 账号时，靠 `~/.ssh/config` 的 **Host 别名**区分身份：别名不同 → 使用不同私钥 → GitHub 认为是不同账号。仓库的 remote 地址也必须写这个别名，而不是 `github.com`。

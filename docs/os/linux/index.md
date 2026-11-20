@@ -2,6 +2,12 @@
 title: Linux
 ---
 
+## 查看服务是否配置自启
+
+```bash
+systemctl is-enabled xxx.service
+```
+
 ## 创建 sudo 用户
 
 !!! note "管理员组名不同"
