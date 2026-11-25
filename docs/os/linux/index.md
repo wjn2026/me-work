@@ -2,6 +2,13 @@
 title: Linux
 ---
 
+## 设置hostname
+
+```
+hostnamectl --static set-hostname hostname
+```
+
+
 ## 查看服务是否配置自启
 
 ```bash

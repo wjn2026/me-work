@@ -1,5 +1,5 @@
 ---
-title: git
+title: Git
 ---
 
 ## 创建新分支

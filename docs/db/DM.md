@@ -145,6 +145,76 @@ select * from sysjob.sysjobs查出你全备的sess_id
 然后sp_dbms_job_run(sess_id)
 
 
+针对达梦数据库因超长 `IN` 列表 SQL 触发 `VM locate variable with incorrect size` 导致的宕机问题，以下是排查肇事 SQL 与修改底层配置的完整操作总结：
+
+### 一、 如何查看导致宕机的问题 SQL
+
+当达梦数据库触发 `dm_sys_halt` 保护性停机时，系统会生成 core 文件。由于 Linux 系统的 `systemd-coredump` 机制接管了 core 文件，我们需要将其提取并解析：
+
+1. **定位并解压 Core 文件**
+   进入 systemd 的 coredump 目录，找到对应时间点的 `.lz4` 压缩文件，并使用 `lz4` 工具解压：
+   ```bash
+   cd /var/lib/systemd/coredump/
+   sudo lz4 -d core.dmserver.xxxx.xz4
+   ```
+2. **使用 dmrdc 提取 SQL**
+   切换到 `dmdba` 用户，进入达梦 `bin` 目录，使用 `dmrdc` 工具解析解压后的 core 文件，提取崩溃瞬间的 SQL：
+   ```bash
+   ./dmrdc sfile=/var/lib/systemd/coredump/core.dmserver.xxxx dfile=/home/dmdba_pro/crash_sql.txt
+   ```
+3. **查看提取结果**
+   打开生成的 `crash_sql.txt` 文件，搜索 `sql:` 关键字即可看到肇事 SQL。
+   *注：如果提取出的仅为 `select status$, mode$ from v$instance;` 等心跳语句，说明工作线程已崩溃，此时需使用 `gdb ./dmserver [core文件路径]` 进入调试模式，通过 `thread apply all bt` 查看底层函数调用栈来进一步定位。*
+
+---
+
+### 二、 如何查看与修改数据库配置
+
+在达梦数据库中，参数分为动态参数（修改后即时生效）和静态参数（必须重启生效）。
+
+#### 1. 查看当前配置
+*   **查询视图（推荐）**：通过 `V$DM_INI` 视图可以查看参数的当前内存值、配置文件值以及参数类型（`IN FILE` 代表静态参数，必须重启）：
+    ```sql
+    SELECT PARA_NAME, PARA_VALUE, FILE_VALUE, PARA_TYPE FROM V$DM_INI WHERE PARA_NAME IN ('BUFFER', 'VM_STACK_SIZE');
+    ```
+*   **使用系统函数**：直接获取内存中生效的值：
+    ```sql
+    SELECT SF_GET_PARA_VALUE(2, 'VM_STACK_SIZE');
+    ```
+
+#### 2. 修改配置（以扩大 VM_STACK_SIZE 为例）
+由于 `VM_STACK_SIZE` 是静态参数，且在很多版本中默认不显式写在配置文件里，必须手动添加并重启：
+
+1. **停止数据库服务**：
+   ```bash
+   sudo systemctl stop DmServiceDMSERVERZCGL_PRO
+   ```
+2. **编辑 dm.ini 文件**：
+   ```bash
+   vim /home/dmdba_pro/dmdata_zcgl/DAMENG/dm.ini
+   ```
+3. **添加或修改参数**：在文件末尾添加以下内容（单位为 KB，1024 即 1MB，可根据需求调大至 262144 即 256MB）：
+   ```ini
+   VM_STACK_SIZE = 1024
+   ```
+4. **启动数据库并验证**：
+   ```bash
+   sudo systemctl start DmServiceDMSERVERZCGL_PRO
+   ```
+   重启后，再次使用 `SF_GET_PARA_VALUE(2, 'VM_STACK_SIZE')` 验证数值是否已变更为 1024。
+
+---
+
+### 三、 核心避坑指南
+
+*   **静态参数修改陷阱**：对于 `PARA_TYPE` 为 `IN FILE` 的静态参数，使用 `SP_SET_PARA_VALUE(1, ...)` 是无效的，必须直接修改 `dm.ini` 文件并重启服务。
+*   **超长 IN 列表的性能隐患**：虽然扩大 `VM_STACK_SIZE` 能让数据库“扛住”超长 SQL 不崩溃，但当 `IN` 列表的值过多时，达梦优化器极易放弃索引转为全表扫描，导致 SQL 执行极慢。长期来看，建议从代码层面将超长 `IN` 列表拆分为分批查询，或存入临时表后进行 `JOIN` 关联。
+
+---
+
+
+
+
 ## 全量备份异地恢复
 
 用备份集 `DB_DAMENG_FULL_2026_11_14_01_00_50` 在目标服务器上恢复达梦数据库。全过程以 `dmdba` 用户操作，`dmrman` 需在数据库服务停止的状态下执行。
